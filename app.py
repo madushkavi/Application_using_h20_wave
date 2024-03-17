@@ -1,59 +1,44 @@
-from h2o_wave import main, app, Q, ui, on, run_on
-import h2o
-from h2o.automl import H2OAutoML
+from fastapi import Depends, FastAPI, HTTPException
+from h2o_wave import Q, ui
+from predictor import Predictor
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 
-h2o.init()
+app = FastAPI()
 
-aml = H2OAutoML.load_model("your_trained_model_path")
+predictor = Predictor()
 
-def predict_movie_type(title):
-    try:
-        df = h2o.H2OFrame({"title": [title]})
-        prediction = aml.predict(df)
-        return prediction[0, "predict"]
-    except Exception as e:
-        return f"Prediction failed. Error: {str(e)}"
+class PredictionRequest(BaseModel):
+    mfr: str
+    type: str
+    calories: int
 
-def add_card(q, name, card) -> None:
-    q.client.cards.add(name)
-    q.page[name] = card
+class PredictionResponse(BaseModel):
+    predicted_rating: float
 
-def clear_cards(q, ignore=[]):
-    if not q.client.cards:
-        return
-    for name in q.client.cards.copy():
-        if name not in ignore:
-            del q.page[name]
-            q.client.cards.remove(name)
+@app.post('/cereal', response_model=PredictionResponse)
+async def serve(q: Q = Depends(), request: PredictionRequest = Depends()):
+    prediction = None  # Initialize prediction variable
+    if q.args.predict:
+        try:
+            prediction = predictor.predict_rating(request)
+            q.page['result'] = ui.text(f'Predicted Rating: {prediction}')
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
 
-async def init(q: Q) -> None:
-    pass
+    content = ui.form_card(
+        box='1 1 10 10',
+        items=[
+            ui.choice(label='Manufacturer', name='mfr', choices=['A', 'B', 'C']),
+            ui.choice(label='Type', name='type', choices=['C', 'H']),
+            ui.int(label='Calories', name='calories'),
+            ui.button(name='predict', label='Predict'),
+        ],
+    )
 
-@on('#page1')
-async def page1(q: Q):
-    clear_cards(q)
-    add_card(q, 'prediction_form', ui.form_card(box='vertical', items=[
-        ui.textbox(name='movie_title', label='Enter Movie Title:'),
-        ui.buttons(items=[ui.button(name='predict_movie', label='Predict', primary=True)]),
-        ui.text(name='predicted_type', content='', style='margin-top: 20px; font-weight: bold;')
-    ]))
+    if 'result' in q.page:
+        content += q.page['result']
 
-@on('predict_movie')
-async def predict_movie(q: Q):
-    movie_title = q.args.movie_title
-    predicted_type = predict_movie_type(movie_title)
+    q.page['content'] = content
 
-    q.page['prediction_form'].items[2].content = f'Predicted Movie Type: {predicted_type}'
-
-@app('/movie')
-async def serve(q: Q):
-    if not q.client.initialized:
-        q.client.cards = set()
-        await init(q)
-        q.client.initialized = True
-
-    await run_on(q)
-    await q.page.save()
-
-if __name__ == '__main__':
-    main()
+    return PredictionResponse(predicted_rating=prediction)

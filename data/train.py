@@ -1,28 +1,37 @@
+# train.py
+from h2o_wave import Q, ui
 import h2o
 from h2o.automl import H2OAutoML
-import pandas as pd
 
-h2o.init()
+def train_model():
+    h2o.init()
+    df = h2o.import_file('./cereal.csv') 
+    train, test = df.split_frame(ratios=[0.8], seed=10)
 
-file_path = r'netflix_titles.csv'
-df = pd.read_csv(file_path)
-h2o_df = h2o.H2OFrame(df)
-h2o_df['listed_in'] = h2o_df['listed_in'].asfactor()
+    response_col = 'rating'
+    predictor_cols = df.columns.remove(response_col)
 
-train, test = h2o_df.split_frame(ratios=[0.8], seed=42)
-x = h2o_df.names[2:-1]
-y = 'listed_in'
+    aml = H2OAutoML(
+        max_models=10,
+        seed=10,
+        stopping_tolerance=0.012,
+        stopping_rounds=3,
+        nfolds=8
+    )
 
-aml = H2OAutoML(max_models=5, seed=1)
-print('before_train')
-aml.train(x=x, y=y, training_frame=train)
-print('train')
-model_path = "./best_model/"
-aml_path = h2o.save_model(model=aml.leader, path=model_path, force=True)
-lb = aml.leaderboard
-print(lb)
-preds = aml.predict(test)
+    aml.train(x=predictor_cols, y=response_col, training_frame=train)
 
-h2o.cluster().shutdown()
+    model_path = "./model/" 
+    aml_path = h2o.save_model(model=aml.leader, path=model_path, force=True)
 
-print(f"Trained model saved at: {aml_path}")
+    lb = aml.leaderboard
+    print(lb)
+
+    preds = aml.predict(test)
+
+    h2o.cluster().shutdown(prompt=False)
+
+    print(f"Trained model saved at: {aml_path}")
+
+if __name__ == '__main__':
+    train_model()
